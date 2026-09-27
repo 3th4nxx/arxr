@@ -1,0 +1,140 @@
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Arial, sans-serif;
+}
+
+body {
+    position: fixed;
+    inset: 0;
+}
+
+#camera {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    display: none;
+}
+
+#three {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+#hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    color: white;
+}
+
+#topbar {
+    position: absolute;
+    top: max(18px, env(safe-area-inset-top));
+    left: 18px;
+    right: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.brand {
+    padding: 9px 13px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.5);
+    backdrop-filter: blur(14px);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 2px;
+}
+
+#status {
+    padding: 9px 13px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.5);
+    backdrop-filter: blur(14px);
+    font-size: 12px;
+}
+
+#center {
+    position: absolute;
+    left: 50%;
+    top: 42%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: 90%;
+    transition: opacity .3s ease;
+}
+
+#message {
+    font-size: 30px;
+    font-weight: 800;
+    text-shadow: 0 2px 15px rgba(0,0,0,.5);
+}
+
+#submessage {
+    margin-top: 8px;
+    font-size: 15px;
+    opacity: .8;
+}
+
+#start {
+    pointer-events: auto;
+    position: absolute;
+    left: 50%;
+    bottom: max(95px, calc(env(safe-area-inset-bottom) + 75px));
+    transform: translateX(-50%);
+    border: 0;
+    border-radius: 999px;
+    padding: 16px 28px;
+    font-size: 16px;
+    font-weight: 800;
+    color: white;
+    background: rgba(20,20,20,.85);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 10px 40px rgba(0,0,0,.4);
+}
+
+#bottom {
+    position: absolute;
+    left: 18px;
+    right: 18px;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+#voice,
+#pinch {
+    padding: 11px 14px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.5);
+    backdrop-filter: blur(14px);
+    font-size: 12px;
+}
+
+.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.active {
+    background: rgba(255,255,255,.2) !important;
+}
