@@ -3,28 +3,666 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#050505">
 <title>WebAR Cube</title>
-<link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <video id="camera" autoplay muted playsinline></video>
-<canvas id="three"></canvas>
-<div id="hud">
-    <div id="topbar">
-        <div class="brand">WEBAR</div>
-        <div id="status">Camera off</div>
+<canvas id="scene"></canvas>
+<div id="ui">
+    <div id="top">
+        <div class="pill">WEBAR CUBE</div>
+        <div class="pill" id="status">OFFLINE</div>
     </div>
     <div id="center">
-        <div id="message">Tap START</div>
-        <div id="submessage">Scan your surroundings</div>
+        <h1 id="title">WebAR Cube</h1>
+        <p id="subtitle">Camera + hand tracking</p>
     </div>
     <button id="start">START AR</button>
     <div id="bottom">
-        <div id="voice">Say “cube”</div>
-        <div id="pinch">🤏 Pinch to grab</div>
+        <div class="pill" id="voice">🎤 Say "cube"</div>
+        <div class="pill" id="hand">🤚 No hand</div>
     </div>
+    <div id="error"></div>
 </div>
-<script type="module" src="./app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
+:::
+### `style.css`
+:::writing{variant="document" id="27519" title="style.css"}
+```css
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+html,
+body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Arial, sans-serif;
+}
+body {
+    position: fixed;
+    inset: 0;
+}
+#camera {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 0;
+    display: none;
+}
+#scene {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+}
+#ui {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    color: white;
+    pointer-events: none;
+}
+#top {
+    position: absolute;
+    top: max(15px, env(safe-area-inset-top));
+    left: 15px;
+    right: 15px;
+    display: flex;
+    justify-content: space-between;
+}
+.pill {
+    background: rgba(0,0,0,.6);
+    border: 1px solid rgba(255,255,255,.15);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    padding: 9px 13px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+}
+#center {
+    position: absolute;
+    left: 50%;
+    top: 43%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: 90%;
+}
+#title {
+    margin: 0;
+    font-size: 32px;
+}
+#subtitle {
+    opacity: .75;
+    margin-top: 8px;
+}
+#start {
+    position: absolute;
+    pointer-events: auto;
+    left: 50%;
+    bottom: 115px;
+    transform: translateX(-50%);
+    border: 0;
+    border-radius: 999px;
+    padding: 17px 30px;
+    background: white;
+    color: black;
+    font-size: 16px;
+    font-weight: 800;
+}
+#bottom {
+    position: absolute;
+    left: 15px;
+    right: 15px;
+    bottom: max(18px, env(safe-area-inset-bottom));
+    display: flex;
+    justify-content: space-between;
+}
+#error {
+    display: none;
+    position: absolute;
+    left: 15px;
+    right: 15px;
+    bottom: 160px;
+    padding: 14px;
+    border-radius: 15px;
+    background: rgba(180,0,0,.85);
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+.hidden {
+    display: none !important;
+}
+:::
+### `app.js`
+:::writing{variant="document" id="83164" title="app.js"}
+```javascript
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js";
+const video = document.getElementById("camera");
+const canvas = document.getElementById("scene");
+const startButton = document.getElementById("start");
+const status = document.getElementById("status");
+const title = document.getElementById("title");
+const subtitle = document.getElementById("subtitle");
+const voiceText = document.getElementById("voice");
+const handText = document.getElementById("hand");
+const errorBox = document.getElementById("error");
+let stream;
+let renderer;
+let scene;
+let camera;
+let cube;
+let animationStarted = false;
+let handLandmarker = null;
+let lastVideoTime = -1;
+let grabbing = false;
+let pinch = false;
+let handPosition = new THREE.Vector3();
+let previousHandPosition = new THREE.Vector3();
+let handVelocity = new THREE.Vector3();
+let cubeVelocity = new THREE.Vector3();
+let floorY = 0;
+function setStatus(text) {
+    status.textContent = text;
+}
+function showError(error) {
+    console.error(error);
+    errorBox.style.display = "block";
+    if (error instanceof Error) {
+        errorBox.textContent = error.message;
+    } else {
+        errorBox.textContent = String(error);
+    }
+}
+function clearError() {
+    errorBox.style.display = "none";
+    errorBox.textContent = "";
+}
+async function startCamera() {
+    if (!navigator.mediaDevices) {
+        throw new Error("Camera API unavailable. Open this through HTTPS on Safari.");
+    }
+    stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+            facingMode: {
+                ideal: "environment"
+            },
+            width: {
+                ideal: 1280
+            },
+            height: {
+                ideal: 720
+            }
+        }
+    });
+    video.srcObject = stream;
+    await video.play();
+    video.style.display = "block";
+    setStatus("CAMERA ON");
+}
+function createThree() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.01,
+        100
+    );
+    camera.position.set(0, 1.6, 3);
+    renderer = new THREE.WebGLRenderer({
+        canvas,
+        alpha: true,
+        antialias: true
+    });
+    renderer.setPixelRatio(
+        Math.min(window.devicePixelRatio, 2)
+    );
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
+    const ambient = new THREE.HemisphereLight(
+        0xffffff,
+        0x555555,
+        2
+    );
+    scene.add(ambient);
+    const light = new THREE.DirectionalLight(
+        0xffffff,
+        3
+    );
+    light.position.set(2, 5, 3);
+    scene.add(light);
+    const floorGeometry =
+        new THREE.PlaneGeometry(20, 20);
+    const floorMaterial =
+        new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0
+        });
+    const floor =
+        new THREE.Mesh(
+            floorGeometry,
+            floorMaterial
+        );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = floorY;
+    scene.add(floor);
+    window.addEventListener(
+        "resize",
+        resize
+    );
+}
+function spawnCube() {
+    if (cube) {
+        scene.remove(cube);
+    }
+    const geometry =
+        new THREE.BoxGeometry(
+            0.35,
+            0.35,
+            0.35
+        );
+    const material =
+        new THREE.MeshStandardMaterial({
+            color: 0x007aff,
+            roughness: .35,
+            metalness: .1
+        });
+    cube =
+        new THREE.Mesh(
+            geometry,
+            material
+        );
+    cube.castShadow = true;
+    cube.position.set(
+        0,
+        floorY + .175,
+        -1.2
+    );
+    scene.add(cube);
+    cubeVelocity.set(
+        0,
+        0,
+        0
+    );
+    title.textContent = "CUBE SPAWNED";
+    subtitle.textContent = "Pinch the cube to grab it";
+    voiceText.textContent = "✓ Cube active";
+}
+function setupVoice() {
+    const Recognition =
+        window.SpeechRecognition ||
+        window.webkitSpeechRecognition;
+    if (!Recognition) {
+        voiceText.textContent =
+            "🎤 Voice unavailable";
+        return;
+    }
+    const recognition =
+        new Recognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onstart = () => {
+        voiceText.textContent =
+            "🎤 Listening";
+    };
+    recognition.onresult = event => {
+        let text = "";
+        for (
+            let i = event.resultIndex;
+            i < event.results.length;
+            i++
+        ) {
+            text +=
+                event.results[i][0].transcript;
+        }
+        text = text.toLowerCase();
+        if (text.includes("cube")) {
+            spawnCube();
+        }
+    };
+    recognition.onerror = event => {
+        voiceText.textContent =
+            "🎤 Voice error";
+    };
+    recognition.onend = () => {
+        try {
+            recognition.start();
+        } catch {}
+    };
+    try {
+        recognition.start();
+    } catch {}
+}
+async function setupHands() {
+    status.textContent =
+        "LOADING HAND TRACKING";
+    const module =
+        await import(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm"
+        );
+    const HandLandmarker =
+        module.HandLandmarker;
+    const FilesetResolver =
+        module.FilesetResolver;
+    const vision =
+        await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+        );
+    handLandmarker =
+        await HandLandmarker.createFromOptions(
+            vision,
+            {
+                baseOptions: {
+                    modelAssetPath:
+                        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 1,
+                minHandDetectionConfidence: .5,
+                minHandPresenceConfidence: .5,
+                minTrackingConfidence: .5
+            }
+        );
+    status.textContent =
+        "AR READY";
+}
+function distance(a, b) {
+    const x =
+        a.x - b.x;
+    const y =
+        a.y - b.y;
+    const z =
+        a.z - b.z;
+    return Math.sqrt(
+        x * x +
+        y * y +
+        z * z
+    );
+}
+function processHand(results) {
+    if (
+        !results ||
+        !results.landmarks ||
+        results.landmarks.length === 0
+    ) {
+        handText.textContent =
+            "🤚 No hand";
+        return;
+    }
+    const hand =
+        results.landmarks[0];
+    handText.textContent =
+        "🤚 Hand detected";
+    const thumb =
+        hand[4];
+    const index =
+        hand[8];
+    const pinchDistance =
+        distance(
+            thumb,
+            index
+        );
+    const isPinching =
+        pinchDistance < .065;
+    const point =
+        hand[8];
+    const x =
+        (0.5 - point.x) * 2;
+    const y =
+        (0.5 - point.y) * 1.7;
+    const z =
+        -1.1 -
+        Math.max(
+            0,
+            -point.z * 2
+        );
+    const newPosition =
+        new THREE.Vector3(
+            x,
+            Math.max(
+                .25,
+                .9 + y
+            ),
+            z
+        );
+    handVelocity
+        .copy(newPosition)
+        .sub(previousHandPosition)
+        .multiplyScalar(60);
+    previousHandPosition.copy(
+        newPosition
+    );
+    handPosition.copy(
+        newPosition
+    );
+    if (!cube) {
+        pinch = isPinching;
+        return;
+    }
+    const distanceToCube =
+        cube.position.distanceTo(
+            handPosition
+        );
+    if (
+        isPinching &&
+        !grabbing &&
+        distanceToCube < .65
+    ) {
+        grabbing = true;
+        cubeVelocity.set(
+            0,
+            0,
+            0
+        );
+        handText.textContent =
+            "🤏 GRABBING";
+    }
+    if (
+        !isPinching &&
+        grabbing
+    ) {
+        grabbing = false;
+        cubeVelocity.copy(
+            handVelocity
+        );
+        handText.textContent =
+            "🖐 RELEASED";
+    }
+    if (grabbing) {
+        moveCube();
+    }
+    pinch = isPinching;
+}
+function moveCube() {
+    const target =
+        handPosition.clone();
+    target.y =
+        Math.max(
+            floorY + .175,
+            target.y
+        );
+    cube.position.lerp(
+        target,
+        .35
+    );
+    cube.rotation.x += .025;
+    cube.rotation.y += .025;
+    resolveCollision();
+}
+function resolveCollision() {
+    if (!cube) return;
+    const radius = .22;
+    const difference =
+        cube.position
+            .clone()
+            .sub(handPosition);
+    const distance =
+        difference.length();
+    if (
+        distance < radius &&
+        distance > .001
+    ) {
+        difference.normalize();
+        cube.position.copy(
+            handPosition
+                .clone()
+                .add(
+                    difference.multiplyScalar(
+                        radius
+                    )
+                )
+        );
+    }
+}
+function physics(delta) {
+    if (!cube || grabbing) {
+        return;
+    }
+    cubeVelocity.y -=
+        9.81 * delta;
+    cube.position.addScaledVector(
+        cubeVelocity,
+        delta
+    );
+    const floor =
+        floorY + .175;
+    if (
+        cube.position.y <
+        floor
+    ) {
+        cube.position.y =
+            floor;
+        if (
+            Math.abs(
+                cubeVelocity.y
+            ) > .4
+        ) {
+            cubeVelocity.y *= -.45;
+        } else {
+            cubeVelocity.y = 0;
+        }
+        cubeVelocity.x *= .9;
+        cubeVelocity.z *= .9;
+    }
+    cube.rotation.x +=
+        cubeVelocity.z * delta;
+    cube.rotation.z -=
+        cubeVelocity.x * delta;
+}
+function detectHands() {
+    if (
+        !handLandmarker ||
+        video.readyState < 2
+    ) {
+        requestAnimationFrame(
+            detectHands
+        );
+        return;
+    }
+    if (
+        video.currentTime !==
+        lastVideoTime
+    ) {
+        lastVideoTime =
+            video.currentTime;
+        const results =
+            handLandmarker.detectForVideo(
+                video,
+                performance.now()
+            );
+        processHand(results);
+    }
+    requestAnimationFrame(
+        detectHands
+    );
+}
+function render() {
+    requestAnimationFrame(render);
+    if (
+        renderer &&
+        scene &&
+        camera
+    ) {
+        renderer.render(
+            scene,
+            camera
+        );
+    }
+}
+let lastTime =
+    performance.now();
+function physicsLoop() {
+    requestAnimationFrame(
+        physicsLoop
+    );
+    const now =
+        performance.now();
+    const delta =
+        Math.min(
+            (now - lastTime) / 1000,
+            .033
+        );
+    lastTime = now;
+    physics(delta);
+}
+async function start() {
+    clearError();
+    startButton.disabled = true;
+    startButton.textContent =
+        "STARTING...";
+    try {
+        title.textContent =
+            "Opening camera";
+        subtitle.textContent =
+            "Allow camera access";
+        await startCamera();
+        createThree();
+        render();
+        physicsLoop();
+        title.textContent =
+            "Loading hand tracking";
+        subtitle.textContent =
+            "Almost there";
+        await setupHands();
+        setupVoice();
+        detectHands();
+        title.textContent =
+            "Say “cube”";
+        subtitle.textContent =
+            "Then pinch the cube";
+        startButton.style.display =
+            "none";
+    } catch (error) {
+        showError(error);
+        title.textContent =
+            "START FAILED";
+        subtitle.textContent =
+            "See the error box below";
+        startButton.disabled =
+            false;
+        startButton.textContent =
+            "TRY AGAIN";
+        setStatus("ERROR");
+    }
+}
+startButton.addEventListener(
+    "click",
+    start
+);
